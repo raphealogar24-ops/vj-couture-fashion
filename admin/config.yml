@@ -1,0 +1,18 @@
+backend:
+  name: github
+  repo: raphealogar24-ops/vj-couture-fashion
+  branch: main 
+
+media_folder: "images" # Where images uploaded from your phone will save in GitHub
+public_folder: "images"
+
+collections:
+  - name: "products"
+    label: "Fashion Gallery"
+    folder: "content"
+    create: true
+    fields:
+      - { label: "Title", name: "title", widget: "string" }
+      - { label: "Upload Image", name: "image", widget: "image" }
+      - { label: "Price / Details", name: "body", widget: "markdown", required: false }
+      
