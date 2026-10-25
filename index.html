@@ -23,42 +23,280 @@
 <script>
 'use strict';
 const firebaseConfig={apiKey:'AIzaSyBb3tIK0EBLDvdBi7z4aXtuC_uL6I-4VQg',authDomain:'v-j-couture-fashion.firebaseapp.com',projectId:'v-j-couture-fashion',storageBucket:'v-j-couture-fashion.firebasestorage.app',messagingSenderId:'1028160301017',appId:'1:1028160301017:web:6d084e95ae02f03d1d1bc8',measurementId:'G-3914HN77RF'};
+
+// Initialize Firebase compat app
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
+const storage = firebase.storage();
+
 const state={products:[],cart:loadLocal('vjc_cart_v2',[]),settings:{whatsapp:'',contact:'Orders and enquiries'},adminLogged:false,editingPhotoUrl:'',productUnsub:null,settingsUnsub:null};
-let db,auth,storage,toastTimer;
+let toastTimer;
+
 function loadLocal(k,f){try{const v=localStorage.getItem(k);return v===null?f:JSON.parse(v)}catch(e){return f}}
 function saveCart(){try{localStorage.setItem('vjc_cart_v2',JSON.stringify(state.cart))}catch(e){}}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function money(n){return '₦'+Number(n||0).toLocaleString('en-NG',{maximumFractionDigits:0})}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3200)}
 function openModal(id){document.getElementById(id).classList.add('show')}function closeModal(id){document.getElementById(id).classList.remove('show')}
-document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>closeModal(b.dataset.close)));document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('show')}));document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.overlay.show').forEach(o=>o.classList.remove('show'))});
+
+document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>closeModal(b.dataset.close)));
+document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('show')}));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.overlay.show').forEach(o=>o.classList.remove('show'))});
+
 function imageHtml(p){return p.imageUrl?`<img class="product-image" src="${esc(p.imageUrl)}" alt="${esc(p.name)}" loading="lazy">`:'<div class="placeholder" aria-label="No photo uploaded">V-J</div>'}
 function filteredProducts(){const q=document.getElementById('searchInput').value.trim().toLowerCase(),cat=document.getElementById('categoryFilter').value,sort=document.getElementById('sortFilter').value;let list=state.products.filter(p=>(cat==='all'||p.category===cat)&&[p.name,p.description,p.category].some(v=>String(v||'').toLowerCase().includes(q)));if(sort==='low')list.sort((a,b)=>a.price-b.price);else if(sort==='high')list.sort((a,b)=>b.price-a.price);else if(sort==='az')list.sort((a,b)=>a.name.localeCompare(b.name));else list.sort((a,b)=>(b.created||0)-(a.created||0));return list}
 function renderProducts(){const grid=document.getElementById('productGrid'),list=filteredProducts();document.getElementById('productCount').textContent=`${list.length} item${list.length===1?'':'s'}`;if(!list.length){grid.innerHTML='<div class="empty">No products have been added yet. Please check back soon.</div>';return}grid.innerHTML=list.map(p=>`<article class="product">${imageHtml(p)}<div class="product-info"><span class="category">${esc(p.category||'Other')}</span><h3>${esc(p.name)}</h3><p class="description">${esc(p.description||'Contact us for more details.')}</p><div class="price">${money(p.price)}</div><div class="product-actions"><button class="btn rose" data-add="${esc(p.id)}">Add to cart</button><button class="btn light" data-ask="${esc(p.id)}">Enquire</button></div></div></article>`).join('');grid.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>addToCart(b.dataset.add));grid.querySelectorAll('[data-ask]').forEach(b=>b.onclick=()=>enquire(b.dataset.ask))}
 function renderCartCount(){document.getElementById('cartCount').textContent=state.cart.reduce((n,x)=>n+Number(x.qty||0),0)}
 function addToCart(id){const p=state.products.find(x=>x.id===id);if(!p)return;const item=state.cart.find(x=>x.id===id);if(item)item.qty++;else state.cart.push({id,qty:1});saveCart();renderCartCount();toast('Added to your cart.')}
-function renderCart(){state.cart=state.cart.filter(x=>state.products.some(p=>p.id===x.id)&&x.qty>0);saveCart();const box=document.getElementById('cartContents');if(!state.cart.length){box.innerHTML='<div class="empty">Your cart is empty. Add something you love from the collection.</div>';document.getElementById('cartTotal').textContent=money(0);document.getElementById('checkoutBtn').disabled=true;return}box.innerHTML='<div class="cart-list">'+state.cart.map(c=>{const p=state.products.find(x=>x.id===c.id);return `<div class="cart-row"><div class="grow"><b>${esc(p.name)}</b><div class="tiny">${money(p.price)} each</div></div><div class="qty"><button data-dec="${esc(c.id)}" aria-label="Decrease quantity">−</button><b>${c.qty}</b><button data-inc="${esc(c.id)}" aria-label="Increase quantity">+</button></div><b>${money(p.price*c.qty)}</b><button class="btn outline small" data-remove="${esc(c.id)}">Remove</button></div>`}).join('')+'</div>';const total=state.cart.reduce((n,c)=>n+state.products.find(p=>p.id===c.id).price*c.qty,0);document.getElementById('cartTotal').textContent=money(total);document.getElementById('checkoutBtn').disabled=false;box.querySelectorAll('[data-dec]').forEach(b=>b.onclick=()=>changeQty(b.dataset.dec,-1));box.querySelectorAll('[data-inc]').forEach(b=>b.onclick=()=>changeQty(b.dataset.inc,1));box.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{state.cart=state.cart.filter(c=>c.id!==b.dataset.remove);saveCart();renderCart();renderCartCount()})}
-function changeQty(id,delta){const c=state.cart.find(x=>x.id===id);if(c)c.qty+=delta;state.cart=state.cart.filter(x=>x.qty>0);saveCart();renderCart();renderCartCount()}
-function waUrl(message){const num=String(state.settings.whatsapp||'').replace(/\D/g,'');if(!num){toast('WhatsApp is not configured yet. Please try again later.');return null}return 'https://wa.me/'+num+'?text='+encodeURIComponent(message)}
-function enquire(id){const p=state.products.find(x=>x.id===id);if(!p)return;const url=waUrl(`Hello V-J Couture Fashion, I would like to enquire about:\n${p.name}\nPrice: ${money(p.price)}`);if(url)window.open(url,'_blank','noopener')}
-document.getElementById('adminOpen').onclick=()=>{openModal('adminOverlay');if(state.adminLogged)showAdminPanel(true)};document.getElementById('cartOpen').onclick=()=>{renderCart();openModal('cartOverlay')};document.getElementById('searchInput').addEventListener('input',renderProducts);['categoryFilter','sortFilter'].forEach(id=>document.getElementById(id).addEventListener('change',renderProducts));
-document.getElementById('checkoutBtn').onclick=()=>{if(!state.cart.length)return;const lines=state.cart.map(c=>{const p=state.products.find(x=>x.id===c.id);return `${p.name} x ${c.qty} — ${money(p.price*c.qty)}`});const total=state.cart.reduce((n,c)=>n+state.products.find(p=>p.id===c.id).price*c.qty,0);const name=document.getElementById('customerName').value.trim(),note=document.getElementById('customerNote').value.trim();const message=`Hello V-J Couture Fashion, I would like to place an order.\n${name?'Customer: '+name+'\n':''}\n${lines.join('\n')}\n\nTotal: ${money(total)}${note?'\nDelivery address / notes: '+note:''}`;const url=waUrl(message);if(url)window.open(url,'_blank','noopener')};
-document.getElementById('footerWhatsApp').onclick=()=>{const url=waUrl('Hello V-J Couture Fashion, I would like to make an enquiry.');if(url)window.open(url,'_blank','noopener')};
-function showAdminPanel(on){document.getElementById('adminLogin').hidden=on;document.getElementById('adminPanel').hidden=!on;document.getElementById('adminTitle').textContent=on?'Manage your store':'Admin login';if(on){document.getElementById('waNumber').value=state.settings.whatsapp||'';document.getElementById('storeContact').value=state.settings.contact||'Orders and enquiries';renderAdminList()}}
-function watchCloud(){if(state.productUnsub)state.productUnsub();if(state.settingsUnsub)state.settingsUnsub();state.productUnsub=db.collection('products').onSnapshot(snap=>{state.products=snap.docs.map(d=>({id:d.id,...d.data()}));renderProducts();renderCartCount();if(state.adminLogged)renderAdminList()},err=>{console.error(err);toast('Could not load products. Check Firebase Firestore rules and setup.')});state.settingsUnsub=db.collection('store').doc('settings').onSnapshot(doc=>{if(doc.exists)state.settings={whatsapp:'',contact:'Orders and enquiries',...doc.data()};populateSettings();if(state.adminLogged){document.getElementById('waNumber').value=state.settings.whatsapp||'';document.getElementById('storeContact').value=state.settings.contact||'Orders and enquiries'}},err=>console.warn('Store settings read failed',err))}
-function populateSettings(){document.getElementById('footerContact').textContent=state.settings.contact||'Orders and enquiries';}
-document.getElementById('loginBtn').onclick=async()=>{const email=document.getElementById('adminEmail').value.trim(),password=document.getElementById('adminPass').value;if(!email||!password){toast('Enter your admin email and password.');return}const b=document.getElementById('loginBtn');b.disabled=true;b.textContent='Signing in…';try{await auth.signInWithEmailAndPassword(email,password);state.adminLogged=true;showAdminPanel(true);toast('Signed in successfully.')}catch(e){console.error(e);toast(authMessage(e.code))}finally{b.disabled=false;b.textContent='Sign in'}};
-function authMessage(code){return ({'auth/invalid-credential':'Email or password is incorrect.','auth/user-not-found':'No admin account found. Create it in Firebase Authentication first.','auth/wrong-password':'Email or password is incorrect.','auth/too-many-requests':'Too many attempts. Wait a little and try again.','auth/operation-not-allowed':'Enable Email/Password sign-in in Firebase Authentication.','auth/network-request-failed':'Network problem. Check your internet connection.'})[code]||('Sign-in failed: '+code)}
-authReady();function authReady(){if(!window.firebase){document.getElementById('productGrid').innerHTML='<div class="empty">Firebase scripts did not load. Check your internet connection.</div>';return}try{firebase.initializeApp(firebaseConfig);auth=firebase.auth();db=firebase.firestore();storage=firebase.storage();watchCloud();auth.onAuthStateChanged(user=>{state.adminLogged=!!user;showAdminPanel(!!user);if(user){document.getElementById('adminEmail').value=user.email||'';document.getElementById('adminStatus').textContent='Signed in as '+(user.email||'admin')+'. Changes save to Firebase.'}})}catch(e){console.error(e);toast('Firebase could not start. Verify the project configuration.')}}
-function resetProductForm(){document.getElementById('productForm').reset();document.getElementById('editId').value='';document.getElementById('cancelEdit').hidden=true;document.getElementById('saveProductBtn').textContent='Save product';state.editingPhotoUrl='';document.getElementById('currentPhotoNote').textContent=''}
-document.getElementById('cancelEdit').onclick=resetProductForm;
-document.getElementById('productForm').onsubmit=async e=>{e.preventDefault();if(!state.adminLogged){toast('Please sign in first.');return}const id=document.getElementById('editId').value||('p-'+Date.now()+'-'+Math.random().toString(36).slice(2,8));const old=state.products.find(p=>p.id===id);const file=document.getElementById('pImage').files[0];const name=document.getElementById('pName').value.trim(),price=Number(document.getElementById('pPrice').value);if(!name||!Number.isFinite(price)||price<0){toast('Enter a valid product name and price.');return}const btn=document.getElementById('saveProductBtn');btn.disabled=true;btn.textContent='Saving…';try{let imageUrl=state.editingPhotoUrl||old?.imageUrl||'';if(file){if(file.size>5*1024*1024)throw new Error('Photo must be 5 MB or smaller.');if(!/^image\/(jpeg|png|webp)$/.test(file.type))throw new Error('Use a JPG, PNG or WebP photo.');const ref=storage.ref('product-photos/'+id+'/'+Date.now()+'-'+file.name.replace(/[^a-zA-Z0-9._-]/g,'_'));const snap=await ref.put(file,{contentType:file.type});imageUrl=await snap.ref.getDownloadURL()}const product={name,price,category:document.getElementById('pCategory').value,description:document.getElementById('pDescription').value.trim(),imageUrl,created:old?.created||Date.now(),updated:Date.now()};await db.collection('products').doc(id).set(product,{merge:true});resetProductForm();toast('Product saved and published.')}catch(err){console.error(err);toast(err.message||'Could not save product. Check Firestore and Storage rules.')}finally{btn.disabled=false;btn.textContent='Save product'}};
-function renderAdminList(){const box=document.getElementById('adminList');if(!state.products.length){box.innerHTML='<p class="tiny">No products yet. Add your first product using the form above.</p>';return}box.innerHTML=state.products.slice().sort((a,b)=>(b.created||0)-(a.created||0)).map(p=>`<div class="admin-item">${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="">`:'<div class="admin-thumb"></div>'}<div class="admin-meta"><b>${esc(p.name)}</b><span class="tiny">${money(p.price)} · ${esc(p.category||'Other')}</span></div><div class="admin-buttons"><button class="btn outline small" data-edit="${esc(p.id)}">Edit</button><button class="btn outline small" data-delete="${esc(p.id)}">Delete</button></div></div>`).join('');box.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>editProduct(b.dataset.edit));box.querySelectorAll('[data-delete]').forEach(b=>b.onclick=()=>deleteProduct(b.dataset.delete))}
-function editProduct(id){const p=state.products.find(x=>x.id===id);if(!p)return;document.getElementById('editId').value=p.id;document.getElementById('pName').value=p.name||'';document.getElementById('pPrice').value=p.price||0;document.getElementById('pCategory').value=p.category||'Other';document.getElementById('pDescription').value=p.description||'';document.getElementById('pImage').value='';state.editingPhotoUrl=p.imageUrl||'';document.getElementById('currentPhotoNote').textContent=p.imageUrl?'Current photo will be kept unless you select a new one.':'';document.getElementById('cancelEdit').hidden=false;document.getElementById('saveProductBtn').textContent='Update product';document.getElementById('productForm').scrollIntoView({behavior:'smooth',block:'start'})}
-async function deleteProduct(id){const p=state.products.find(x=>x.id===id);if(!p||!confirm('Delete “'+p.name+'”? This removes it from the public catalogue.'))return;try{await db.collection('products').doc(id).delete();state.cart=state.cart.filter(c=>c.id!==id);saveCart();renderCartCount();toast('Product deleted.')}catch(e){console.error(e);toast('Delete failed. Check that you are signed in and your rules allow admin writes.')}}
-document.getElementById('saveSettings').onclick=async()=>{if(!state.adminLogged)return toast('Please sign in first.');const whatsapp=document.getElementById('waNumber').value.replace(/\D/g,'');const contact=document.getElementById('storeContact').value.trim()||'Orders and enquiries';try{await db.collection('store').doc('settings').set({whatsapp,contact,updated:Date.now()},{merge:true});toast('Store settings saved.')}catch(e){console.error(e);toast('Could not save settings. Check Firestore rules.')}};
-document.getElementById('logoutBtn').onclick=async()=>{try{await auth.signOut();state.adminLogged=false;showAdminPanel(false);document.getElementById('adminPass').value='';closeModal('adminOverlay');toast('Logged out.')}catch(e){toast('Could not log out.')}};
-document.getElementById('exportBtn').onclick=()=>{const blob=new Blob([JSON.stringify({products:state.products,settings:state.settings,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='vj-couture-product-backup.json';a.click();URL.revokeObjectURL(a.href)};
-document.getElementById('importFile').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(!state.adminLogged){toast('Please sign in first.');e.target.value='';return}try{const data=JSON.parse(await file.text());if(!Array.isArray(data.products))throw new Error('Backup file must contain a products array.');if(!confirm('Import '+data.products.length+' product(s)? Matching IDs will be overwritten.'))return;for(const p of data.products){if(!p.id||!p.name)continue;const clean={name:String(p.name).slice(0,100),price:Number(p.price)||0,category:String(p.category||'Other'),description:String(p.description||'').slice(0,500),imageUrl:String(p.imageUrl||''),created:Number(p.created)||Date.now(),updated:Date.now()};await db.collection('products').doc(String(p.id)).set(clean,{merge:true})}toast('Product backup imported. Photos are not uploaded by the JSON backup.')}catch(err){console.error(err);toast(err.message||'Could not import backup.')}finally{e.target.value=''}};
-document.getElementById('year').textContent=new Date().getFullYear();renderCartCount();renderCart();
-</script></body></html>
+
+function renderCart(){
+  state.cart=state.cart.filter(x=>state.products.some(p=>p.id===x.id)&&x.qty>0);
+  saveCart();
+  const box=document.getElementById('cartContents');
+  if(!state.cart.length){
+    box.innerHTML='<div class="empty">Your cart is empty. Add something you love from the collection.</div>';
+    document.getElementById('cartTotal').textContent=money(0);
+    document.getElementById('checkoutBtn').disabled=true;
+    return;
+  }
+  box.innerHTML='<div class="cart-list">'+state.cart.map(c=>{
+    const p=state.products.find(x=>x.id===c.id);
+    if(!p)return'';
+    return `<div class="cart-row"><div class="grow"><b>${esc(p.name)}</b><div class="tiny">${money(p.price)} each</div></div><div class="qty"><button data-dec="${esc(c.id)}" aria-label="Decrease quantity">−</button><b>${c.qty}</b><button data-inc="${esc(c.id)}" aria-label="Increase quantity">+</button></div><b>${money(p.price*c.qty)}</b><button class="btn outline small" data-remove="${esc(c.id)}">Remove</button></div>`;
+  }).join('')+'</div>';
+  
+  const total=state.cart.reduce((n,c)=>{
+    const p=state.products.find(x=>x.id===c.id);
+    return n+(p?p.price*c.qty:0);
+  },0);
+  document.getElementById('cartTotal').textContent=money(total);
+  document.getElementById('checkoutBtn').disabled=false;
+
+  box.querySelectorAll('[data-inc]').forEach(b=>b.onclick=()=>{const item=state.cart.find(x=>x.id===b.dataset.inc);if(item){item.qty++;renderCart();renderCartCount();}});
+  box.querySelectorAll('[data-dec]').forEach(b=>b.onclick=()=>{const item=state.cart.find(x=>x.id===b.dataset.dec);if(item){item.qty--;if(item.qty<=0)state.cart=state.cart.filter(x=>x.id!==b.dataset.dec);renderCart();renderCartCount();}});
+  box.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{state.cart=state.cart.filter(x=>x.id!==b.dataset.remove);renderCart();renderCartCount();});
+}
+
+function enquire(id){
+  const p=state.products.find(x=>x.id===id);
+  if(!p)return;
+  const num=(state.settings.whatsapp||'').replace(/\D/g,'');
+  const msg=encodeURIComponent(`Hello V-J Couture, I would like to enquire about "${p.name}" priced at ${money(p.price)}. Is it available?`);
+  if(num) window.open(`https://wa.me/${num}?text=${msg}`,'_blank');
+  else toast('WhatsApp number is not configured yet. Please check back later.');
+}
+
+document.getElementById('cartOpen').onclick=()=>{renderCart();openModal('cartOverlay');};
+document.getElementById('adminOpen').onclick=()=>openModal('adminOverlay');
+
+document.getElementById('checkoutBtn').onclick=()=>{
+  const num=(state.settings.whatsapp||'').replace(/\D/g,'');
+  const name=document.getElementById('customerName').value.trim();
+  const note=document.getElementById('customerNote').value.trim();
+  let text='Hello V-J Couture, I would like to place an order:\n\n';
+  if(name) text+=`Customer Name: ${name}\n`;
+  state.cart.forEach(c=>{
+    const p=state.products.find(x=>x.id===c.id);
+    if(p) text+=`- ${p.name} x ${c.qty} (${money(p.price * c.qty)})\n`;
+  });
+  const total=state.cart.reduce((n,c)=>{const p=state.products.find(x=>x.id===c.id);return n+(p?p.price*c.qty:0)},0);
+  text+=`\nTotal: ${money(total)}`;
+  if(note) text+=`\n\nDelivery/Notes:\n${note}`;
+  
+  if(num) window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`,'_blank');
+  else toast('WhatsApp number is not configured.');
+};
+
+document.getElementById('footerWhatsApp').onclick=()=>{
+  const num=(state.settings.whatsapp||'').replace(/\D/g,'');
+  const msg=encodeURIComponent('Hello V-J Couture, I have an enquiry about your fashion collection.');
+  if(num) window.open(`https://wa.me/${num}?text=${msg}`,'_blank');
+  else toast('WhatsApp number is not configured.');
+};
+
+// Controls triggers
+['searchInput','categoryFilter','sortFilter'].forEach(id=>document.getElementById(id).oninput=renderProducts);
+document.getElementById('categoryFilter').onchange=renderProducts;
+document.getElementById('sortFilter').onchange=renderProducts;
+document.getElementById('year').textContent=new Date().getFullYear();
+
+// Firebase Data Sync Listeners
+db.collection('products').onSnapshot(snapshot=>{
+  state.products=[];
+  snapshot.forEach(doc=>{
+    state.products.push({id:doc.id, ...doc.data()});
+  });
+  renderProducts();
+  renderCart();
+  renderCartCount();
+  if(state.adminLogged) renderAdminList();
+}, err=>{
+  console.error("Error loading products:", err);
+});
+
+db.collection('settings').doc('store').onSnapshot(doc=>{
+  if(doc.exists){
+    state.settings=doc.data();
+    document.getElementById('waNumber').value=state.settings.whatsapp||'';
+    document.getElementById('storeContact').value=state.settings.contact||'';
+    document.getElementById('footerContact').textContent=state.settings.contact||'WhatsApp orders available.';
+  }
+}, err=>{
+  console.error("Error loading settings:", err);
+});
+
+// Admin Auth & Actions
+auth.onAuthStateChanged(user=>{
+  if(user){
+    state.adminLogged=true;
+    document.getElementById('adminTitle').textContent='Admin panel';
+    document.getElementById('adminLogin').hidden=true;
+    document.getElementById('adminPanel').hidden=false;
+    renderAdminList();
+  }else{
+    state.adminLogged=false;
+    document.getElementById('adminTitle').textContent='Admin login';
+    document.getElementById('adminLogin').hidden=false;
+    document.getElementById('adminPanel').hidden=true;
+  }
+});
+
+document.getElementById('loginBtn').onclick=async()=>{
+  const email=document.getElementById('adminEmail').value.trim();
+  const pass=document.getElementById('adminPass').value;
+  try{
+    await auth.signInWithEmailAndPassword(email,pass);
+    toast('Signed in successfully.');
+  }catch(e){
+    toast('Sign in failed: '+e.message);
+  }
+};
+
+document.getElementById('logoutBtn').onclick=()=>auth.signOut();
+
+document.getElementById('saveSettings').onclick=async()=>{
+  const whatsapp=document.getElementById('waNumber').value.trim();
+  const contact=document.getElementById('storeContact').value.trim();
+  try{
+    await db.collection('settings').doc('store').set({whatsapp, contact}, {merge:true});
+    toast('Store settings saved!');
+  }catch(e){
+    toast('Error saving settings: '+e.message);
+  }
+};
+
+// Handle Adding/Editing Products with Image Storage Upload
+document.getElementById('productForm').onsubmit=async(e)=>{
+  e.preventDefault();
+  const editId=document.getElementById('editId').value;
+  const name=document.getElementById('pName').value.trim();
+  const price=Number(document.getElementById('pPrice').value);
+  const category=document.getElementById('pCategory').value;
+  const description=document.getElementById('pDescription').value.trim();
+  const fileInput=document.getElementById('pImage');
+  const file=fileInput.files[0];
+
+  const saveBtn=document.getElementById('saveProductBtn');
+  saveBtn.disabled=true;
+  saveBtn.textContent='Saving...';
+
+  try{
+    let imageUrl=state.editingPhotoUrl;
+
+    // If a new image file was selected, upload it to Firebase Storage
+    if(file){
+      const storageRef=storage.ref('products/' + Date.now() + '_' + file.name);
+      const snapshot=await storageRef.put(file);
+      imageUrl=await snapshot.ref.getDownloadURL();
+    }
+
+    const productData={
+      name,
+      price,
+      category,
+      description,
+      imageUrl,
+      created: editId ? undefined : Date.now()
+    };
+
+    if(editId){
+      if(!productData.created) delete productData.created;
+      await db.collection('products').doc(editId).update(productData);
+      toast('Product updated successfully!');
+    }else{
+      await db.collection('products').add(productData);
+      toast('Product added successfully!');
+    }
+
+    // Reset Form
+    document.getElementById('productForm').reset();
+    document.getElementById('editId').value='';
+    state.editingPhotoUrl='';
+    document.getElementById('currentPhotoNote').textContent='';
+    document.getElementById('cancelEdit').hidden=true;
+    saveBtn.textContent='Save product';
+  }catch(err){
+    console.error(err);
+    toast('Error saving product: '+err.message);
+  }finally{
+    saveBtn.disabled=false;
+  }
+};
+
+document.getElementById('cancelEdit').onclick=()=>{
+  document.getElementById('productForm').reset();
+  document.getElementById('editId').value='';
+  state.editingPhotoUrl='';
+  document.getElementById('currentPhotoNote').textContent='';
+  document.getElementById('cancelEdit').hidden=true;
+};
+
+function renderAdminList(){
+  const listEl=document.getElementById('adminList');
+  if(!state.products.length){
+    listEl.innerHTML='<p class="tiny">No products found in database.</p>';
+    return;
+  }
+  listEl.innerHTML=state.products.map(p=>`
+    <div class="admin-item">
+      ${p.imageUrl ? `<img src="${esc(p.imageUrl)}" alt="">` : '<div class="admin-thumb"></div>'}
+      <div class="admin-meta">
+        <b>${esc(p.name)}</b>
+        <div class="tiny">${esc(p.category)} · ${money(p.price)}</div>
+      </div>
+      <div class="admin-buttons">
+        <button class="btn outline small" data-edit-p="${esc(p.id)}">Edit</button>
+        <button class="btn outline small" data-del-p="${esc(p.id)}" style="color:#b43d3d">Delete</button>
+      </div>
+    </div>
+  `).join('');
+
+  listEl.querySelectorAll('[data-edit-p]').forEach(b=>b.onclick=()=>{
+    const p=state.products.find(x=>x.id===b.dataset.editP);
+    if(!p)return;
+    document.getElementById('editId').value=p.id;
+    document.getElementById('pName').value=p.name||'';
+    document.getElementById('pPrice').value=p.price||'';
+    document.getElementById('pCategory').value=p.category||'Clothing';
+    document.getElementById('pDescription').value=p.description||'';
+    state.editingPhotoUrl=p.imageUrl||'';
+    document.getElementById('currentPhotoNote').textContent=p.imageUrl?'Current photo kept if you do not upload a new one.':'No photo currently uploaded.';
+    document.getElementById('cancelEdit').hidden=false;
+    document.getElementById('adminOverlay').scrollTo({top:0,behavior:'smooth'});
+  });
+
+  listEl.querySelectorAll('[data-del-p]').forEach(b=>b.onclick=async()=>{
+    if(confirm('Are you sure you want to delete this product?')){
+      try{
+        await db.collection('products').doc(b.dataset.delP).delete();
+        toast('Product deleted.');
+      }catch(err){
+        toast('Failed to delete: '+err.message);
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>
